@@ -2,119 +2,142 @@
 
 import streamlit as st
 import random
-import math # math.ceil を使うためにインポート
+import math
 
 # --- 設定 ---
-# メンバーリスト (Webアプリ上でも編集可能にする場合は、後述のコメントアウトを解除)
-# ここで定義したものが初期値になります。
 INITIAL_MEMBERS = ["いとう", "さいとう", "さわ", "にしかわ"]
+SUBJECTS = ["指定なし", "民法1", "民法2", "憲法", "刑法"] # 科目リストを追加
 # ------------
 
-# (割り当て関数は前のコードからそのままコピー＆ペースト)
-# 関数の内容は変更ありません
-def assign_problems_with_random_remainder(total_problems, member_list):
+# --- 割り当て関数 (変更なし) ---
+def assign_problems_fully_random(total_problems, member_list):
+    # ... (この関数のコードは前のまま) ...
     num_members = len(member_list)
     if num_members == 0: return {}
     if total_problems <= 0: return {member: [] for member in member_list}
-
+    all_problem_numbers = list(range(1, total_problems + 1))
+    random.shuffle(all_problem_numbers)
     assignments = {member: [] for member in member_list}
-    base_problems_per_member = total_problems // num_members
-    problem_counter = 1
-
-    for _ in range(base_problems_per_member):
-        for member in member_list:
-            if problem_counter <= total_problems:
-                assignments[member].append(problem_counter)
-                problem_counter += 1
-
-    remainder_count = total_problems % num_members
-    remainder_problems = list(range(problem_counter, total_problems + 1))
-
-    if remainder_count > 0:
-        # 安全策：万が一、余りの数がメンバー数を超えることはないはずだが、念のため
-        actual_remainder_assignees_count = min(remainder_count, num_members)
-        if actual_remainder_assignees_count > 0:
-             remainder_assignees = random.sample(member_list, actual_remainder_assignees_count)
-             for i in range(remainder_count):
-                 # 担当者が足りなくなった場合（基本発生しないはず）はループを抜ける
-                 if i >= len(remainder_assignees): break
-                 problem_to_assign = remainder_problems[i]
-                 assignee = remainder_assignees[i]
-                 assignments[assignee].append(problem_to_assign)
-
+    for i in range(total_problems):
+        assignee_index = i % num_members
+        assignee = member_list[assignee_index]
+        problem_to_assign = all_problem_numbers[i]
+        assignments[assignee].append(problem_to_assign)
     for member in assignments:
         assignments[member].sort()
     return assignments
 
-# --- Streamlit アプリケーション ---
+# --- Streamlit アプリケーション部分 ---
 
-st.set_page_config(page_title="課題割り振り君", layout="centered") # ブラウザタブのタイトル設定
+st.set_page_config(page_title="課題割り振り君", layout="centered")
 st.title("📝 予習課題 自動割り振りツール")
 
-# --- メンバー設定 ---
+# --- メンバー設定 (折りたたみ) ---
 st.subheader("メンバー設定")
-# st.session_state を使って、入力状態を保持する
 if 'members_text' not in st.session_state:
     st.session_state['members_text'] = ", ".join(INITIAL_MEMBERS)
 
-members_text_input = st.text_area(
-    "メンバーリスト (カンマ区切りで入力・編集してください):",
-    value=st.session_state['members_text'],
-    key="members_text_area" # key を指定すると再描画時に値が維持されやすい
-)
-# 入力されたテキストをリストに変換（空要素は除去）
-current_members = [name.strip() for name in members_text_input.split(',') if name.strip()]
+with st.expander("メンバーリストを表示/編集する", expanded=False):
+    st.info("カンマ(,)区切りでメンバー名を入力・編集してください。")
+    members_input_widget = st.text_area(
+        "編集エリア:",
+        value=st.session_state['members_text'],
+        key="members_text_widget"
+    )
+    st.session_state['members_text'] = members_input_widget
+    temp_members_check = [name.strip() for name in st.session_state['members_text'].split(',') if name.strip()]
+    if not temp_members_check:
+        st.warning("メンバーが入力されていません。")
+    else:
+        st.success(f"現在 {len(temp_members_check)} 名のメンバーが設定されています。")
 
+# --- メンバー表示 (常に表示) ---
+current_members = [name.strip() for name in st.session_state['members_text'].split(',') if name.strip()]
 if not current_members:
-    st.warning("メンバーが入力されていません。")
+    st.error("メンバーが設定されていません。上の「メンバーリストを表示/編集する」を開いて入力してください。")
 else:
-    st.write(f"現在のメンバー ({len(current_members)}名): {', '.join(current_members)}")
+    st.write(f"**現在の割り当て対象メンバー ({len(current_members)}名):** {', '.join(current_members)}")
 
-st.markdown("---") # 区切り線
+st.markdown("---")
 
-# --- 問題数入力と実行 ---
-st.subheader("割り当て実行")
+# --- 科目選択と問題数入力 ---
+st.subheader("割り当て設定")
+
+# NEW: 科目選択を追加
+selected_subject = st.selectbox(
+    "科目を選択してください:",
+    SUBJECTS,
+    index=0 # デフォルトで "指定なし" を選択状態にする
+)
+
 total_problems_input = st.number_input(
     "総問題数を入力してください:",
-    min_value=1,  # 1問以上を入力
-    step=1,       # 整数入力
-    value=max(1, len(current_members)) # デフォルト値をメンバー数か1に設定
+    min_value=1,
+    step=1,
+    value=max(1, len(current_members) if current_members else 1)
 )
 
-# 割り当て実行ボタン
-if st.button("🔄 割り当て実行", disabled=(not current_members)): # メンバーがいないとボタンを押せない
+# --- 割り当て実行ボタン ---
+if st.button("🔄 割り当て実行", disabled=(not current_members)):
     if total_problems_input >= 1 and current_members:
         # 割り当てを実行
-        final_assignments = assign_problems_with_random_remainder(total_problems_input, current_members)
+        final_assignments = assign_problems_fully_random(total_problems_input, current_members)
 
-        # 結果を表示
+        # --- 結果表示 (科目名を追加) ---
         st.subheader("🎉 課題割り当て結果")
         if not final_assignments:
              st.warning("割り当て対象のメンバーがいません。")
         else:
-            # 担当者ごとに表示
-            cols = st.columns(len(current_members)) # メンバー数に応じて列を分割
+            cols = st.columns(len(current_members))
             member_index = 0
-            for member, problems in final_assignments.items():
-                with cols[member_index % len(cols)]: # 列を順番に使う
+            # メンバー名をソートして表示順を固定
+            sorted_members = sorted(final_assignments.keys())
+
+            for member in sorted_members:
+                problems = final_assignments[member]
+                with cols[member_index % len(cols)]:
+                    # 科目名をプレフィックスとして追加
+                    #subject_prefix = f"【{selected_subject}】 " if selected_subject != "指定なし" else ""
+
                     if problems:
                         problem_str = ", ".join(map(str, problems))
-                        st.markdown(f"**{member}さん** ({len(problems)}問)")
-                        st.write(f"問題: {problem_str}")
+                        st.markdown(f"**{member}** ({len(problems)}問)")
+                        st.write(f"問題: {problem_str}") # 科目名を追加
                     else:
-                        st.markdown(f"**{member}さん** (0問)")
+                        st.markdown(f"**{member}** (0問)")
                         st.write("担当なし")
                 member_index += 1
 
-            # 全員分を表示した後、リスト形式でも表示（オプション）
-            # st.write("---")
-            # st.write("リスト形式:")
-            # for member, problems in final_assignments.items():
-            #     if problems:
-            #         problem_str = ", ".join(map(str, problems))
-            #         st.write(f"- {member}さん: 問題 {problem_str}")
-            #     else:
-            #         st.write(f"- {member}さん: 担当なし")
+            # --- NEW: 共有用テキスト生成と表示 ---
+            st.divider() # 区切り線を追加
+            st.subheader("📲 共有用テキスト")
+
+            share_lines = []
+            # ヘッダー行
+            if selected_subject != "指定なし":
+                share_lines.append(f"【{selected_subject} 課題割り当て ({total_problems_input}問)】")
+            else:
+                share_lines.append(f"【課題割り当て ({total_problems_input}問)】")
+            share_lines.append("---") # 区切り線
+
+            # 各メンバーの割り当て（表示順と同じくソートされたメンバー順）
+            for member in sorted_members:
+                problems = final_assignments[member]
+                if problems:
+                    problem_str = ", ".join(map(str, problems))
+                    share_lines.append(f"{member}さん: 問題 {problem_str} ({len(problems)}問)")
+                else:
+                    share_lines.append(f"{member}さん: 担当なし")
+
+            share_text = "\n".join(share_lines) # 各行を改行で結合
+
+            # st.code() で整形済みテキストとして表示
+            st.code(share_text, language=None)
+            st.info("上のテキストボックスの内容全体をコピーして、チャットなどに貼り付けて共有できます。")
+
+            # (補足情報)
+            #st.caption("※ より便利な「コピー」ボタンを設置するには、`streamlit-copy-button` などの追加ライブラリの導入が必要です。")
+            # --- 共有用テキストここまで ---
 
     elif not current_members:
          st.error("メンバーリストが空です。メンバーを入力してください。")
@@ -122,4 +145,4 @@ if st.button("🔄 割り当て実行", disabled=(not current_members)): # メ�
          st.warning("問題数を1以上で入力してください。")
 
 st.markdown("---")
-st.caption(f"Powered by Streamlit | {st.experimental_get_query_params().get('timestamp', [''])[0]}") # ちょっとしたフッター
+st.caption("Powered by Streamlit")
